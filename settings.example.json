@@ -1,0 +1,24 @@
+{
+  "window": {
+    "width": 1920,
+    "height": 1080,
+    "fps": 60
+  },
+  "telegram": {
+    "enabled": false,
+    "token": "YOUR_TELEGRAM_BOT_TOKEN",
+    "chat_id": "YOUR_CHAT_ID"
+  },
+  "simulation": {
+    "beacon_range": 800,
+    "obstacles_count": 3,
+    "tractor_speed": 160,
+    "tractor_width_px": 60,
+    "tractor_offset_px": 30
+  },
+  "lidar": {
+    "range": 350,
+    "fov": 120,
+    "stop_distance": 50
+  }
+}
