@@ -1,5 +1,7 @@
 #  AgroNav: Autonomous Tractor Navigation Simulator
 
+![AgroNav Screenshot](screenshot.png)
+
 > **My Diploma Project (@ MTUCI)**. A 2D simulation of a GPS-less navigation system for agricultural machinery, utilizing an Extended Kalman Filter (EKF), UWB-beacon mesh network, and boustrophedon path planning.
 
 Precision agriculture requires machinery to know its exact position without relying solely on GPS. I built this simulator as a **technical proof-of-concept** to demonstrate how sensor fusion can solve this. It models real-world physics and algorithms similar to those used in commercial platforms like John Deere AutoTrac or CLAAS PILOT.
