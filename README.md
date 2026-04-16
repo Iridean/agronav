@@ -27,9 +27,11 @@ pip install pygame numpy pandas matplotlib requests
 cp settings.example.json settings.json
 
 python main.py
+
 🎮 Controls:
 SPACE: Autopilot | E: Path Editor | C: Clear AI Memory | S: Toggle CSV Logging
-H: GDOP Heatmap | L: Lidar View | F: Simulate Beacon Failure | Click: Toggle Beacons
+H: GDOP Heatmap | L: Lidar View | F: Simulate Beacon Failure | Click: Toggle Beacons 
+
 🔬 Architecture & Results
 The core achievement of this thesis is the algorithm stack:
 Odometry + UWB Ranging ➔ EKF Predict/Update Loop ➔ P-Controller ➔ Obstacle Avoidance
