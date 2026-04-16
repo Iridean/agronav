@@ -12,7 +12,7 @@ Precision agriculture requires machinery to know its exact position without rely
 - **Analytics & Alerts:** Includes a CSV logger tracking 12 parameters per frame. The built-in analysis tool generates 7 Matplotlib charts (EKF vs DR error, covariance, GDOP). Plus, real-time Telegram push notifications for emergency stops.
 
 ### 🛠 Tech Stack
-**Python 3.9+** | `NumPy` (Matrix math/EKF) | `Pandas` & `Matplotlib` (Data analysis) | `Pygame` (Rendering) | `Requests` (Alerts)
+**Python 3.9+** | NumPy | Pandas & Matplotlib | Pygame | Requests |
 
 ### 🚀 Quick Start
 
