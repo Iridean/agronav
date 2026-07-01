@@ -1,42 +1,68 @@
-#  AgroNav: Autonomous Tractor Navigation Simulator
+AgroNav — это специализированный программный комплекс для исследования, отладки и визуализации алгоритмов локальной навигации и позиционирования мобильных робототехнических платформ (на примере агроинженерной техники).
 
-![AgroNav Screenshot](screenshot.png)
+<img width="2401" height="1352" alt="image" src="https://github.com/user-attachments/assets/6b29a2e5-6e4a-41cd-9f4f-c7feccb39b41" />
 
-> **My Diploma Project (@ MTUCI)**. A 2D simulation of a GPS-less navigation system for agricultural machinery, utilizing an Extended Kalman Filter (EKF), UWB-beacon mesh network, and boustrophedon path planning.
+<img width="2401" height="1352" alt="image" src="https://github.com/user-attachments/assets/bc596131-b6a8-464d-8e0e-f8535bc98e86" />
 
-Precision agriculture requires machinery to know its exact position without relying solely on GPS. I built this simulator as a **technical proof-of-concept** to demonstrate how sensor fusion can solve this. It models real-world physics and algorithms similar to those used in commercial platforms like John Deere AutoTrac or CLAAS PILOT.
+<img width="2401" height="1352" alt="image" src="https://github.com/user-attachments/assets/be23124b-59ad-427a-b691-6bad8a52cdbe" />
 
-### Features
+<img width="784" height="419" alt="image" src="https://github.com/user-attachments/assets/bdd85bf1-e353-406d-9fac-1f13cb2d0172" />
 
-- **Sensor Fusion (EKF):** An Extended Kalman Filter fuses noisy wheel odometry (featuring systematic drift and IMU bias) with UWB beacon ranging. It runs alongside a Dead Reckoning (DR) baseline to visually prove EKF's necessity.
-- **UWB Mesh & GDOP:** Simulates a 5-beacon network with adaptive noise and failure simulation. The system dynamically selects the optimal beacon triple based on **Geometric Dilution of Precision (GDOP)** heatmaps.
-- **Smart Path Planning:** Implements the Boustrophedon (lawnmower) algorithm. Features a 16-ray sector Lidar for real-time obstacle avoidance and an **AI Memory** system to pre-route around known field obstacles.
-- **Analytics & Alerts:** Includes a CSV logger tracking 12 parameters per frame. The built-in analysis tool generates 7 Matplotlib charts (EKF vs DR error, covariance, GDOP). Plus, real-time Telegram push notifications for emergency stops.
 
-### Stack
-| NumPy | Pandas & Matplotlib | Pygame | Requests |
+Симулятор позволяет тестировать работу навигационных маяков, анализировать влияние аппаратных шумов и оценивать эффективность математических алгоритмов фильтрации без необходимости развертывания дорогостоящего физического оборудования (например, UWB-систем).
 
-### Quick Start
+Возможности:
+Расширенный фильтр Калмана (EKF): Объединение зашумленных данных автономного счисления пути (одометрии) с измерениями дальности от стационарных маяков для точного определения координат объекта.
 
-```bash
-git clone https://github.com/Iridean/agronav.git
-cd agronav
+Симуляция радиомаяков и Mesh-сетей: Моделирование динамического шума, зависящего от дальности, состояния ячеистой сети (Mesh-связь) и вероятности отказа оборудования.
 
-# Install dependencies
-pip install pygame numpy pandas matplotlib requests
+Оценка качества навигации (GDOP): Автоматический математический расчет фактора геометрического ухудшения точности (GDOP) с генерацией наглядных тепловых карт рабочей зоны.
 
-# Set up config (add Telegram token if needed)
-cp settings.example.json settings.json
+Автопилот и виртуальный лидар: Динамическое построение маршрутов полного покрытия («змейка») и интеллектуальный обход стационарных препятствий с использованием симулированного секторного радара.
 
-python main.py
+Глубокая аналитика: Запись телеметрии в реальном времени в CSV-файлы с последующим построением графиков (сравнение EKF и одометрии, неопределенность позиции, распределение ошибок).
 
- Controls:
-SPACE: Autopilot | E: Path Editor | C: Clear AI Memory | S: Toggle CSV Logging
-H: GDOP Heatmap | L: Lidar View | F: Simulate Beacon Failure | Click: Toggle Beacons 
 
- Architecture & Results
-The core achievement of this thesis is the algorithm stack:
-Odometry + UWB Ranging ➔ EKF Predict/Update Loop ➔ P-Controller ➔ Obstacle Avoidance
-After running a full field pass, the built-in analytics clearly validate the system:
-Dead Reckoning (DR) error: Grows unboundedly to 30–80+ px.
-EKF average error: Stays stable at ~5–12 px, effectively proving that a low-cost UWB network combined with EKF can successfully replace GPS in autonomous field conditions.
+Стек:
+Язык разработки: Python 3.10+
+
+Визуализация и интерфейс: Pygame, Tkinter
+
+Математика и фильтрация: NumPy, Math
+
+Аналитика данных: Pandas, Matplotlib
+
+Хранение конфигураций: JSON
+
+
+Структура:
+main.py — ядро симулятора, графический интерфейс, обработка событий и аналитический модуль.
+
+ekf.py — реализация математического аппарата расширенного фильтра Калмана (матрицы Якоби, предсказание, коррекция).
+
+robot.py — кинематическая модель движения объекта и генерация зашумленных одометрических данных (дрейф, ошибки гироскопа).
+
+beacon.py — логика работы навигационных маяков, расчет погрешностей и имитация сбоев связи.
+
+utils.py — вспомогательные математические функции, расчет GDOP, построение маршрутов.
+
+settings.json — конфигурационный файл (размеры поля, радиус маяков, параметры лидара и настройки бота).
+
+
+
+Легенда:
+W, A, S, D (или Стрелки) — Ручное управление мобильной платформой (газ, поворот, реверс).
+
+Space (Пробел) — Пауза / Возобновление симуляции.
+
+R — Перезапуск симуляции (сброс позиции объекта и очистка истории движения).
+
+E — Показать / скрыть расчетную позицию на основе Расширенного фильтра Калмана (EKF).
+
+L — Включить / выключить отображение лучей виртуального лидара.
+
+B — Отобразить зоны покрытия и радиус действия стационарных радиомаяков.
+
+G — Сгенерировать и показать тепловую карту GDOP (фактора геометрического ухудшения точности).
+
+Esc — Корректное завершение работы симулятора с сохранением телеметрии (CSV) и базы препятствий (ai_memory.json).
