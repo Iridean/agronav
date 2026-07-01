@@ -46,9 +46,8 @@ WINDOW_H = CONFIG["window"]["height"]
 FPS = CONFIG["window"]["fps"]
 TAB_HEIGHT = 40
 SIDEBAR_W = 450
-GRAPH_H = 220
 FIELD_AREA_W = WINDOW_W - SIDEBAR_W
-FIELD_AREA_H = WINDOW_H - GRAPH_H - TAB_HEIGHT
+FIELD_AREA_H = WINDOW_H - TAB_HEIGHT
 
 BEACON_COMMS_RANGE = CONFIG["simulation"]["beacon_range"]
 
@@ -85,7 +84,7 @@ C_COVERAGE   = (0, 180, 120)
 C_GOLD       = (255, 215, 0)
 
 # --- МАШИННОЕ ОБУЧЕНИЕ (ПАМЯТЬ) ---
-MEMORY_FILE = "ai_memory.json"
+MEMORY_FILE = "dist/ai_memory.json"
 
 
 def load_ai_memory():
@@ -294,28 +293,115 @@ def open_file_and_analyze():
     plt.show()
 
 
-# ИСПРАВЛЕНИЕ: функция draw_analysis_screen вызывалась, но не была определена → NameError/краш
-def draw_analysis_screen(screen, font_title, font_main):
-    """Отрисовка экрана анализа данных."""
-    screen.fill(C_BG)
-    # Заголовок
-    title_surf = font_title.render("АНАЛИЗ ДАННЫХ", True, C_ACCENT)
-    screen.blit(title_surf, title_surf.get_rect(center=(WINDOW_W // 2, WINDOW_H // 2 - 80)))
+def draw_analysis_screen(screen, font_title, font_main, font_sm, err_history, dr_err_history,
+                         gdop_history, cov_history, log, rec, avoid_cnt):
+    """Вкладка с живой навигационной аналитикой и внешним CSV-анализом."""
+    screen.fill((16, 16, 20))
 
-    # Подсказка
-    desc_surf = font_main.render("Выберите CSV-лог симуляции для построения графиков", True, C_TEXT_DIM)
-    screen.blit(desc_surf, desc_surf.get_rect(center=(WINDOW_W // 2, WINDOW_H // 2 - 40)))
+    def mean(values):
+        return sum(values) / len(values) if values else 0.0
 
-    # Кнопка открытия файла
-    btn_rect = pygame.Rect(0, 0, 280, 50)
-    btn_rect.center = (WINDOW_W // 2, WINDOW_H // 2 + 10)
+    def metric(x, y, label, value, color=C_TEXT_MAIN):
+        screen.blit(font_main.render(label, True, C_TEXT_DIM), (x, y))
+        screen.blit(font_main.render(value, True, color), (x + 250, y))
+
+    current_ekf = err_history[-1] if err_history else 0.0
+    current_dr = dr_err_history[-1] if dr_err_history else 0.0
+    avg_ekf = mean(err_history)
+    avg_dr = mean(dr_err_history)
+    avg_gain = avg_dr - avg_ekf
+    valid_gdop = [v for v in gdop_history if v < 90]
+    avg_gdop = mean(valid_gdop)
+    current_gdop = valid_gdop[-1] if valid_gdop else 99.0
+    current_cov = cov_history[-1] if cov_history else 0.0
+
+    screen.blit(font_title.render("АНАЛИТИКА ПРОЙДЕННОГО ПУТИ", True, C_ACCENT), (40, 70))
+    screen.blit(
+        font_main.render("Сравнение EKF и одометрии вынесено с основного экрана, чтобы симулятор оставался читаемым.",
+                         True, C_TEXT_DIM),
+        (40, 108)
+    )
+
+    main_card = pygame.Rect(40, 150, 980, 360)
+    draw_card(screen, main_card)
+    screen.blit(font_title.render("Ошибка позиционирования: EKF vs DR", True, C_ACCENT),
+                (main_card.x + 15, main_card.y + 14))
+    pygame.draw.circle(screen, (0, 210, 255), (main_card.x + 18, main_card.y + 36), 4)
+    screen.blit(font_sm.render("EKF", True, C_TEXT_DIM), (main_card.x + 30, main_card.y + 29))
+    pygame.draw.circle(screen, C_WARN, (main_card.x + 80, main_card.y + 36), 4)
+    screen.blit(font_sm.render("Одометрия", True, C_TEXT_DIM), (main_card.x + 92, main_card.y + 29))
+    draw_live_chart(
+        screen,
+        pygame.Rect(main_card.x + 15, main_card.y + 58, main_card.w - 30, main_card.h - 78),
+        [
+            (err_history, (0, 210, 255), True),
+            (dr_err_history, C_WARN, False),
+        ],
+        thresholds=[(25, C_WARN, "< 25 px"), (10, C_GOOD, "< 10 px")]
+    )
+
+    gdop_card = pygame.Rect(1050, 150, 420, 170)
+    draw_card(screen, gdop_card)
+    screen.blit(font_main.render("GDOP во времени", True, C_ACCENT), (gdop_card.x + 15, gdop_card.y + 14))
+    pygame.draw.circle(screen, C_GOLD, (gdop_card.x + 18, gdop_card.y + 35), 4)
+    screen.blit(font_sm.render("GDOP", True, C_TEXT_DIM), (gdop_card.x + 30, gdop_card.y + 28))
+    draw_live_chart(
+        screen,
+        pygame.Rect(gdop_card.x + 15, gdop_card.y + 48, gdop_card.w - 30, gdop_card.h - 65),
+        [(gdop_history, C_GOLD, False)],
+        thresholds=[(2, C_ERR, "2")]
+    )
+
+    cov_card = pygame.Rect(1050, 340, 420, 170)
+    draw_card(screen, cov_card)
+    screen.blit(font_main.render("Неопределённость EKF", True, C_ACCENT), (cov_card.x + 15, cov_card.y + 14))
+    pygame.draw.circle(screen, (205, 80, 255), (cov_card.x + 18, cov_card.y + 35), 4)
+    screen.blit(font_sm.render("trace(P)", True, C_TEXT_DIM), (cov_card.x + 30, cov_card.y + 28))
+    draw_live_chart(
+        screen,
+        pygame.Rect(cov_card.x + 15, cov_card.y + 48, cov_card.w - 30, cov_card.h - 65),
+        [(cov_history, (205, 80, 255), False)]
+    )
+
+    session_card = pygame.Rect(40, 540, 980, 260)
+    draw_card(screen, session_card)
+    screen.blit(font_title.render("ТЕКУЩАЯ СЕССИЯ", True, C_ACCENT), (session_card.x + 15, session_card.y + 18))
+    left_x = session_card.x + 20
+    right_x = session_card.x + 500
+    row_y = session_card.y + 68
+    metric(left_x, row_y, "Текущая ошибка EKF", f"{current_ekf:.2f} px", C_GOOD if current_ekf < 10 else C_WARN)
+    metric(left_x, row_y + 38, "Текущая ошибка одометрии", f"{current_dr:.2f} px", C_WARN)
+    metric(left_x, row_y + 76, "Средняя ошибка EKF", f"{avg_ekf:.2f} px")
+    metric(left_x, row_y + 114, "Средняя ошибка одометрии", f"{avg_dr:.2f} px")
+    metric(left_x, row_y + 152, "Средний выигрыш EKF", f"{avg_gain:+.2f} px",
+           C_GOOD if avg_gain >= 0 else C_ERR)
+
+    metric(right_x, row_y, "Текущий GDOP", f"{current_gdop:.2f}", C_GOOD if current_gdop < 2 else C_WARN)
+    metric(right_x, row_y + 38, "Средний GDOP", f"{avg_gdop:.2f}" if valid_gdop else "—")
+    metric(right_x, row_y + 76, "Текущая trace(P)", f"{current_cov:.3f}")
+    metric(right_x, row_y + 114, "Манёвров объезда", str(avoid_cnt))
+    metric(right_x, row_y + 152, "Точек в CSV-буфере", str(len(log)))
+    screen.blit(font_sm.render("",
+                               True, C_TEXT_DIM),
+                (session_card.x + 20, session_card.bottom - 30))
+
+    external_card = pygame.Rect(1050, 540, 420, 260)
+    draw_card(screen, external_card)
+    screen.blit(font_title.render("ВНЕШНИЙ АНАЛИЗ", True, C_ACCENT), (external_card.x + 15, external_card.y + 18))
+    screen.blit(font_main.render("Откройте сохранённый CSV-файл, чтобы построить полный набор графиков",
+                                 True, C_TEXT_DIM), (external_card.x + 15, external_card.y + 68))
+    screen.blit(font_main.render("Этот режим удобен для скриншотов",
+                                 True, C_TEXT_DIM), (external_card.x + 15, external_card.y + 104))
+    log_state = "Запись лога включена" if rec else "Запись лога выключена"
+    screen.blit(font_main.render(log_state, True, C_GOOD if rec else C_TEXT_DIM),
+                (external_card.x + 15, external_card.bottom - 70))
+    screen.blit(font_main.render("Симулятор: [S] начать/остановить запись", True, C_TEXT_DIM),
+                (external_card.x + 15, external_card.bottom - 35))
+
+    btn_rect = get_analysis_button_rect()
     pygame.draw.rect(screen, C_ACCENT, btn_rect, border_radius=8)
-    btn_text = font_main.render("📂  ОТКРЫТЬ ЛОГ-ФАЙЛ", True, C_BG)
+    btn_text = font_main.render("ОТКРЫТЬ CSV-ЛОГ", True, C_BG)
     screen.blit(btn_text, btn_text.get_rect(center=btn_rect.center))
-
-    # Подсказка про запись
-    hint = font_main.render("Чтобы записать лог — нажмите [S] на вкладке СИМУЛЯТОР", True, C_TEXT_DIM)
-    screen.blit(hint, hint.get_rect(center=(WINDOW_W // 2, WINDOW_H // 2 + 80)))
 
 
 # --- TELEGRAM ---
@@ -609,14 +695,15 @@ def save_csv(data):
         return None
 
 
-def generate_base_path():
+def generate_base_path(margin=130, row_step=None, left_to_right=True):
     """Бустрофедонный маршрут (змейкой)."""
     path = []
-    margin = 130
-    num_rows = int((FIELD_AREA_H - 200) / (IMPLEMENT_WIDTH + 10))
+    row_step = row_step or (IMPLEMENT_WIDTH + 10)
+    num_rows = max(2, int((FIELD_AREA_H - 200) / row_step))
     for i in range(num_rows):
-        y = margin + TAB_HEIGHT + i * (IMPLEMENT_WIDTH + 10)
-        if i % 2 == 0:
+        y = margin + TAB_HEIGHT + i * row_step
+        left_first = (i % 2 == 0) if left_to_right else (i % 2 != 0)
+        if left_first:
             path.append((margin, y))
             path.append((FIELD_AREA_W - margin, y))
         else:
@@ -694,45 +781,122 @@ def is_obstacle_already_known(mem_list, x, y, r, proximity=40):
 
 
 # --- UI ---
+TAB_TITLES = ["СИМУЛЯТОР", "АНАЛИТИКА", "ПЛАН МИССИИ"]
+TAB_W = 220
+
+
+def get_tab_index_at(mx, my):
+    if my >= TAB_HEIGHT or mx < 0 or mx >= TAB_W * len(TAB_TITLES):
+        return None
+    return int(mx // TAB_W)
+
+
+def get_analysis_button_rect():
+    return pygame.Rect(WINDOW_W - 380, WINDOW_H - 120, 300, 50)
+
+
+def draw_card(screen, rect):
+    pygame.draw.rect(screen, C_PANEL, rect, border_radius=8)
+    pygame.draw.rect(screen, (38, 38, 45), rect, 1, border_radius=8)
+
+
+def draw_section_label(screen, font, text, x, y):
+    screen.blit(font.render(text, True, (100, 100, 110)), (x, y))
+
+
+def sidebar_separator(screen, x, y):
+    pygame.draw.line(screen, (50, 50, 55), (x, y), (x + SIDEBAR_W - 60, y), 1)
+
+
 def draw_tabs(screen, font, current_tab):
-    pygame.draw.rect(screen, (15, 15, 18), (0, 0, WINDOW_W, TAB_HEIGHT))
-    tabs = ["СИМУЛЯТОР", "АНАЛИЗ ДАННЫХ", "РЕДАКТОР ПУТИ"]
-    tab_w = 220
-    for i, tab_name in enumerate(tabs):
-        rect = pygame.Rect(i * tab_w, 0, tab_w, TAB_HEIGHT)
-        color = C_PANEL if i == current_tab else (15, 15, 18)
+    pygame.draw.rect(screen, (12, 12, 15), (0, 0, WINDOW_W, TAB_HEIGHT))
+    for i, tab_name in enumerate(TAB_TITLES):
+        rect = pygame.Rect(i * TAB_W, 0, TAB_W, TAB_HEIGHT)
+        color = C_PANEL if i == current_tab else (12, 12, 15)
         pygame.draw.rect(screen, color, rect)
         if i == current_tab:
             pygame.draw.line(screen, C_ACCENT, (rect.left, TAB_HEIGHT - 1), (rect.right, TAB_HEIGHT - 1), 2)
+        if i > 0:
+            pygame.draw.line(screen, (22, 22, 28), (rect.left, 0), (rect.left, TAB_HEIGHT), 1)
         text = font.render(tab_name, True, C_TEXT_MAIN if i == current_tab else C_TEXT_DIM)
         screen.blit(text, text.get_rect(center=rect.center))
     pygame.draw.line(screen, (50, 50, 55), (0, TAB_HEIGHT), (WINDOW_W, TAB_HEIGHT), 1)
 
 
-def draw_info_row(screen, font, x, y, label, value, val_color=C_TEXT_MAIN):
+def draw_info_row(screen, font, x, y, label, value, val_color=C_TEXT_MAIN, right_x=None):
     screen.blit(font.render(label, True, C_TEXT_DIM), (x, y))
     val_surf = font.render(value, True, val_color)
-    screen.blit(val_surf, (x + SIDEBAR_W - 80 - val_surf.get_width(), y))
+    right_x = right_x or (x + SIDEBAR_W - 80)
+    screen.blit(val_surf, (right_x - val_surf.get_width(), y))
+
+
+def draw_live_chart(screen, rect, series_specs, thresholds=None):
+    pygame.draw.rect(screen, (18, 18, 22), rect, border_radius=6)
+    pygame.draw.rect(screen, (24, 24, 30), rect, 1, border_radius=6)
+    chart_font = pygame.font.SysFont("Arial", 10)
+    thresholds = thresholds or []
+    values = []
+    for data, _, _ in series_specs:
+        values.extend(v for v in data if isinstance(v, (int, float)) and v < 999)
+    values.extend(v for v, _, _ in thresholds)
+    max_val = max(values) if values else 1.0
+    max_val = max(max_val * 1.15, 1.0)
+
+    for i in range(1, 4):
+        y = rect.top + int(rect.h * i / 4)
+        pygame.draw.line(screen, (34, 34, 40), (rect.left, y), (rect.right, y), 1)
+
+    for value, color, label in thresholds:
+        y = rect.bottom - int(min(value / max_val, 1.0) * rect.h)
+        pygame.draw.line(screen, color, (rect.left, y), (rect.right, y), 1)
+        label_surf = chart_font.render(label, True, color)
+        screen.blit(label_surf, (rect.right - label_surf.get_width() - 4, y - 14))
+
+    old_clip = screen.get_clip()
+    screen.set_clip(rect)
+    for data, color, filled in series_specs:
+        clean = [v for v in data if isinstance(v, (int, float)) and v < 999]
+        if len(clean) < 2:
+            continue
+        visible = clean[-max(2, rect.w):]
+        denom = max(1, len(visible) - 1)
+        pts = [
+            (
+                rect.left + int(i / denom * (rect.w - 1)),
+                rect.bottom - int(min(max(val, 0) / max_val, 1.0) * (rect.h - 1))
+            )
+            for i, val in enumerate(visible)
+        ]
+        if filled:
+            fill_surf = pygame.Surface((rect.w, rect.h), pygame.SRCALPHA)
+            local_pts = [(x - rect.left, y - rect.top) for x, y in pts]
+            pygame.draw.polygon(fill_surf, (*color, 18),
+                                local_pts + [(local_pts[-1][0], rect.h), (local_pts[0][0], rect.h)])
+            screen.blit(fill_surf, rect)
+        pygame.draw.lines(screen, color, False, pts, 2)
+    screen.set_clip(old_clip)
 
 
 def draw_sim_sidebar(screen, font_sm, font_main, font_title, rob, ekf, err, vis, mode, rec, ha, state_str, lid,
-                     avoid_cnt, mem_cnt, gdop=99.0, dr_err=0.0):
+                     avoid_cnt, mem_cnt, gdop=99.0, dr_err=0.0, route_points=0, ekf_trace=0.0):
     rect = pygame.Rect(FIELD_AREA_W, TAB_HEIGHT, SIDEBAR_W, WINDOW_H - TAB_HEIGHT)
     pygame.draw.rect(screen, C_PANEL, rect)
     pygame.draw.line(screen, (40, 40, 45), (FIELD_AREA_W, TAB_HEIGHT), (FIELD_AREA_W, WINDOW_H), 1)
     x, y = FIELD_AREA_W + 30, TAB_HEIGHT + 30
 
-    screen.blit(font_title.render("TELEMETRY & AI", True, C_ACCENT), (x, y))
+    screen.blit(font_title.render("НАВИГАЦИЯ", True, C_ACCENT), (x, y))
     y += 40
-    pygame.draw.line(screen, (50, 50, 55), (x, y), (x + SIDEBAR_W - 60, y), 1)
-    y += 20
+    sidebar_separator(screen, x, y)
+    y += 22
 
-    screen.blit(font_sm.render("СИСТЕМНЫЙ СТАТУС", True, (100, 100, 110)), (x, y))
-    y += 25
+    draw_section_label(screen, font_sm, "СИСТЕМНЫЙ СТАТУС", x, y)
+    y += 28
     if state_str == "CRASH":
-        st_col = C_ERR; txt = "АВАРИЯ (СТОП)"
+        st_col = C_ERR
+        txt = "АВАРИЯ (СТОП)"
     elif state_str == "REVERSE":
-        st_col = C_WARN; txt = "РЕВЕРС (МАНЕВР)"
+        st_col = C_WARN
+        txt = "РЕВЕРС (МАНЕВР)"
     else:
         st_col = C_GOOD if mode else C_TEXT_DIM
         txt = "АВТОПИЛОТ" if mode else "РУЧНОЕ УПР."
@@ -743,80 +907,78 @@ def draw_sim_sidebar(screen, font_sm, font_main, font_title, rob, ekf, err, vis,
     lid_txt = "СВОБОДНО" if lid_front > 80 else ("ВНИМАНИЕ" if lid_front > 40 else "ОПАСНОСТЬ")
     draw_info_row(screen, font_main, x, y, "Статус радара:", lid_txt,
                   C_GOOD if lid_front > 80 else (C_WARN if lid_front > 40 else C_ERR))
-    y += 40
+    y += 42
 
-    pygame.draw.line(screen, (50, 50, 55), (x, y), (x + SIDEBAR_W - 60, y), 1)
-    y += 20
-    screen.blit(font_sm.render("НАВИГАЦИЯ & СЕТЬ", True, (100, 100, 110)), (x, y))
-    y += 25
+    sidebar_separator(screen, x, y)
+    y += 22
+    draw_section_label(screen, font_sm, "НАВИГАЦИЯ И СЕТЬ", x, y)
+    y += 28
     mesh_ok = any(len(b.neighbors) > 0 for b in vis)
-    draw_info_row(screen, font_main, x, y, "Mesh-топология:", "СТАБИЛЬНО" if mesh_ok else "ПОИСК УЗЛОВ",
+    draw_info_row(screen, font_main, x, y, "Mesh-топология:",
+                  "СТАБИЛЬНО" if mesh_ok else "ПОИСК УЗЛОВ",
                   C_ACCENT if mesh_ok else C_WARN)
     y += 30
     draw_info_row(screen, font_main, x, y, "Активные маяки:", f"{len(vis)} / 5", C_TEXT_MAIN)
     y += 30
-    # GDOP — геометрическое качество позиционирования
     if gdop < 2.0:
-        gdop_col = C_GOOD;  gdop_txt = f"{gdop:.2f}  (ОТЛИЧНО)"
+        gdop_col = C_GOOD
+        gdop_txt = f"{gdop:.2f} (ОТЛИЧНО)"
     elif gdop < 4.0:
-        gdop_col = (180, 255, 0); gdop_txt = f"{gdop:.2f}  (ХОРОШО)"
+        gdop_col = (180, 255, 0)
+        gdop_txt = f"{gdop:.2f} (ХОРОШО)"
     elif gdop < 8.0:
-        gdop_col = C_WARN;  gdop_txt = f"{gdop:.2f}  (СРЕДНЕ)"
+        gdop_col = C_WARN
+        gdop_txt = f"{gdop:.2f} (СРЕДНЕ)"
     else:
-        gdop_col = C_ERR;   gdop_txt = f"{gdop:.1f}  (ПЛОХО)"
+        gdop_col = C_ERR
+        gdop_txt = f"{gdop:.1f} (ПЛОХО)"
     draw_info_row(screen, font_main, x, y, "GDOP:", gdop_txt, gdop_col)
-    y += 40
+    y += 42
 
-    pygame.draw.line(screen, (50, 50, 55), (x, y), (x + SIDEBAR_W - 60, y), 1)
-    y += 20
-    screen.blit(font_sm.render("ИИ: БАЗА ЗНАНИЙ", True, (100, 100, 110)), (x, y))
-    y += 25
-    draw_info_row(screen, font_main, x, y, "Изучено препятствий:", str(mem_cnt),
-                  C_ACCENT if mem_cnt > 0 else C_TEXT_DIM)
+    sidebar_separator(screen, x, y)
+    y += 22
+    draw_section_label(screen, font_sm, "МИССИЯ", x, y)
+    y += 28
+    draw_info_row(screen, font_main, x, y, "Тип маршрута:", "Покрытие поля", C_ACCENT)
+    y += 30
+    draw_info_row(screen, font_main, x, y, "Опорных точек:", str(route_points), C_TEXT_MAIN)
     y += 30
     draw_info_row(screen, font_main, x, y, "Обработано:", f"{ha:.4f} ГА", C_GOOD)
-    y += 40
+    y += 42
 
-    pygame.draw.line(screen, (50, 50, 55), (x, y), (x + SIDEBAR_W - 60, y), 1)
-    y += 20
-    screen.blit(font_sm.render("EKF vs ОДОМЕТРИЯ", True, (100, 100, 110)), (x, y))
-    y += 25
-
-    # EKF ошибка
-    draw_info_row(screen, font_main, x, y, "Ошибка EKF:",
-                  f"{err:.1f} px", C_ERR if err > 15 else C_GOOD)
+    sidebar_separator(screen, x, y)
     y += 22
+    draw_section_label(screen, font_sm, "ТОЧНОСТЬ EKF", x, y)
+    y += 28
+    draw_info_row(screen, font_main, x, y, "Ошибка EKF:", f"{err:.1f} px",
+                  C_ERR if err > 15 else C_GOOD)
+    y += 25
     bar_w = SIDEBAR_W - 80
     pygame.draw.rect(screen, (40, 40, 45), (x, y, bar_w, 5))
-    pygame.draw.rect(screen, (0, 210, 255), (x, y, int(min(err, 60) / 60 * bar_w), 5))
-    y += 14
+    pygame.draw.rect(screen, (0, 150, 255), (x, y, int(min(err, 60) / 60 * bar_w), 5))
+    y += 25
+    draw_info_row(screen, font_main, x, y, "trace(P):", f"{ekf_trace:.3f}", C_TEXT_MAIN)
+    y += 28
 
-    # DR ошибка
-    draw_info_row(screen, font_main, x, y, "Ошибка DR:",
-                  f"{dr_err:.1f} px", C_ERR if dr_err > 30 else C_WARN)
+    sidebar_separator(screen, x, y)
     y += 22
-    pygame.draw.rect(screen, (40, 40, 45), (x, y, bar_w, 5))
-    pygame.draw.rect(screen, (255, 140, 0), (x, y, int(min(dr_err, 60) / 60 * bar_w), 5))
-    y += 16
-
-    # Выигрыш EKF
-    gain = dr_err - err
-    gain_col = C_GOOD if gain > 2 else (C_WARN if gain > 0 else C_ERR)
-    gain_txt  = f"+{gain:.1f} px лучше" if gain > 0 else f"{gain:.1f} px хуже"
-    draw_info_row(screen, font_main, x, y, "EKF выигрыш:", gain_txt, gain_col)
+    draw_section_label(screen, font_sm, "ГОРЯЧИЕ КЛАВИШИ", x, y)
     y += 30
-
-    pygame.draw.line(screen, (50, 50, 55), (x, y), (x + SIDEBAR_W - 60, y), 1)
-    y += 20
-    screen.blit(font_sm.render("ГОРЯЧИЕ КЛАВИШИ", True, (100, 100, 110)), (x, y))
-    y += 30
-    cmds = [("SPACE", "Авто/Ручной"), ("E", "Редактор маршрута"), ("T", "Сохранить опыт"),
-            ("C", "Сброс памяти ИИ"), ("BACKSPACE", "Сброс симуляции"),
-            ("S", "Запись лога"), ("H", "Тепловая карта"), ("L", "Лидар вкл/выкл")]
+    cmds = [
+        ("SPACE", "Авто/Ручной"),
+        ("E", "План миссии"),
+        ("BACKSPACE", "Сброс симуляции"),
+        ("S", "Запись лога"),
+        ("H", "Тепловая карта"),
+        ("L", "Лидар вкл/выкл"),
+        ("P", "Показать/скрыть маршрут"),
+        ("V", "Показать/скрыть покрытие"),
+    ]
     for k, d in cmds:
         screen.blit(font_sm.render(k, True, C_ACCENT), (x, y))
         screen.blit(font_sm.render(d, True, C_TEXT_DIM), (x + 100, y))
         y += 22
+
 
     if state_str == "CRASH":
         y += 20
@@ -824,45 +986,91 @@ def draw_sim_sidebar(screen, font_sm, font_main, font_title, rob, ekf, err, vis,
         screen.blit(al, al.get_rect(center=(x + (SIDEBAR_W - 60) // 2, y)))
 
 
-def draw_graph_panel(screen, rect, history, dr_history=None):
-    """Панель графика в нижней части экрана.
-    Показывает ошибку EKF (голубая) и ошибку DR (оранжевая) одновременно —
-    наглядное сравнение в реальном времени."""
+def path_length(points):
+    if len(points) < 2:
+        return 0
+    return sum(math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1])
+               for i in range(1, len(points)))
+
+
+def draw_field_grid(screen, rect):
+    pygame.draw.rect(screen, C_BG, rect)
+    for gx in range(0, FIELD_AREA_W + 1, 200):
+        pygame.draw.line(screen, C_GRID, (gx, TAB_HEIGHT), (gx, WINDOW_H), 1)
+    for gy in range(TAB_HEIGHT, WINDOW_H + 1, 200):
+        pygame.draw.line(screen, C_GRID, (0, gy), (FIELD_AREA_W, gy), 1)
+
+
+def draw_mission_screen(screen, font_sm, font_main, font_title, obs, preview_path,
+                        mission_profile, mission_margin, mission_step, mission_left_to_right):
+    field_rect = pygame.Rect(0, TAB_HEIGHT, FIELD_AREA_W, FIELD_AREA_H)
+    screen.fill(C_BG)
+    screen.set_clip(field_rect)
+    draw_field_grid(screen, field_rect)
+
+    if len(preview_path) > 1:
+        pygame.draw.lines(screen, C_ACCENT, False, preview_path, 2)
+        dot_step = max(1, len(preview_path) // 110)
+        for p in preview_path[::dot_step]:
+            pygame.draw.circle(screen, C_ACCENT, (int(p[0]), int(p[1])), 3)
+
+    for o in obs:
+        o.draw(screen)
+    screen.set_clip(None)
+
+    rect = pygame.Rect(FIELD_AREA_W, TAB_HEIGHT, SIDEBAR_W, WINDOW_H - TAB_HEIGHT)
     pygame.draw.rect(screen, C_PANEL, rect)
-    pygame.draw.line(screen, (40, 40, 45), (rect.left, rect.top), (rect.right, rect.top), 1)
-    pygame.draw.line(screen, (35, 35, 40), (rect.left, rect.centery), (rect.right, rect.centery), 1)
-    font = pygame.font.SysFont("Arial", 11)
+    pygame.draw.line(screen, (40, 40, 45), (FIELD_AREA_W, TAB_HEIGHT), (FIELD_AREA_W, WINDOW_H), 1)
+    x, y = FIELD_AREA_W + 30, TAB_HEIGHT + 30
 
-    w, h = rect.width - 40, rect.height - 40
-    all_vals = list(history[-w:]) + (list(dr_history[-w:]) if dr_history else [])
-    max_val = max(max(all_vals) if all_vals else 10, 5)
+    screen.blit(font_title.render("ПЛАН МИССИИ", True, C_ACCENT), (x, y))
+    y += 38
+    screen.blit(font_sm.render("Подготовьте маршрут до запуска автопилота.", True, C_TEXT_DIM), (x, y))
+    y += 28
+    sidebar_separator(screen, x, y)
+    y += 22
 
-    def draw_line(data, color, filled=False):
-        if len(data) < 2:
-            return
-        pts = [(rect.left + 20 + i, rect.bottom - 20 - (val / max_val * h))
-               for i, val in enumerate(data[-w:])]
-        pygame.draw.lines(screen, color, False, pts, 1)
-        if filled:
-            surf = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
-            pygame.draw.polygon(surf, (*color, 18),
-                                pts + [(pts[-1][0], rect.bottom - 20), (pts[0][0], rect.bottom - 20)])
-            screen.blit(surf, rect)
+    draw_section_label(screen, font_sm, "ПРОФИЛЬ", x, y)
+    y += 28
+    draw_info_row(screen, font_main, x, y, "Режим:", mission_profile, C_ACCENT)
+    y += 30
+    draw_info_row(screen, font_main, x, y, "Отступ поля:", f"{mission_margin} px")
+    y += 30
+    draw_info_row(screen, font_main, x, y, "Шаг прохода:", f"{mission_step} px")
+    y += 30
+    first_pass = "Слева направо" if mission_left_to_right else "Справа налево"
+    draw_info_row(screen, font_main, x, y, "Первый проход:", first_pass)
+    y += 42
 
-    if dr_history:
-        draw_line(dr_history, (255, 140, 0))          # DR — оранжевая
-    draw_line(history, (0, 210, 255), filled=True)    # EKF — голубая
+    sidebar_separator(screen, x, y)
+    y += 22
+    draw_section_label(screen, font_sm, "ОЦЕНКА", x, y)
+    y += 28
+    draw_info_row(screen, font_main, x, y, "Точек маршрута:", str(len(preview_path)))
+    y += 30
+    draw_info_row(screen, font_main, x, y, "Длина пути:", f"{int(path_length(preview_path))} px")
+    y += 30
+    draw_info_row(screen, font_main, x, y, "Препятствий на карте:", str(len(obs)))
+    y += 42
 
-    screen.blit(font.render(f"EKF: {history[-1]:.1f}px" if history else "EKF: —",
-                            True, (0, 210, 255)), (rect.left + 20, rect.top + 6))
-    if dr_history:
-        screen.blit(font.render(f"DR: {dr_history[-1]:.1f}px" if dr_history else "DR: —",
-                                True, (255, 140, 0)), (rect.left + 110, rect.top + 6))
-        if history and dr_history:
-            gain = dr_history[-1] - history[-1]
-            col = (0, 220, 80) if gain > 0 else (200, 80, 80)
-            screen.blit(font.render(f"EKF лучше на: {gain:.1f}px", True, col),
-                        (rect.left + 230, rect.top + 6))
+    sidebar_separator(screen, x, y)
+    y += 22
+    draw_section_label(screen, font_sm, "УПРАВЛЕНИЕ", x, y)
+    y += 30
+    cmds = [
+        ("M", "Сменить профиль миссии"),
+        ("ENTER / E", "Применить маршрут"),
+        ("ESC", "Вернуться без изменений"),
+        ("UP / DOWN", "Менять отступ поля"),
+        ("LEFT / RIGHT", "Менять шаг прохода"),
+        ("R", "Сменить стартовую сторону"),
+    ]
+    for k, d in cmds:
+        screen.blit(font_sm.render(k, True, C_ACCENT), (x, y))
+        screen.blit(font_sm.render(d, True, C_TEXT_DIM), (x + 120, y))
+        y += 24
+
+    draw_tabs(screen, font_title, 2)
 
 
 # --- MAIN ---
@@ -910,17 +1118,24 @@ def main():
     dr_path = []   # траектория DR для отрисовки
 
     ai_memory = load_ai_memory()
+    mission_profiles = [
+        ("Покрытие поля", 130, IMPLEMENT_WIDTH + 10),
+        ("Точный проход", 100, max(45, IMPLEMENT_WIDTH - 5)),
+        ("Широкий проход", 160, IMPLEMENT_WIDTH + 30),
+    ]
+    mission_profile_idx = 0
+    mission_profile, mission_margin, mission_step = mission_profiles[mission_profile_idx]
+    mission_left_to_right = True
 
     if ai_memory.get("learned_path"):
         path = smooth_path(ai_memory["learned_path"])
         using_learned_path = True
     else:
-        base_p = generate_base_path()
+        base_p = generate_base_path(mission_margin, mission_step, mission_left_to_right)
         path = optimize_path_with_memory(base_p, ai_memory.get("obstacles", []))
         using_learned_path = False
 
     app_state = "SIM"
-    custom_path = []
     actual_driven_path = []
     tractor_state = "FORWARD"
     reverse_timer = 0
@@ -931,10 +1146,26 @@ def main():
     current_gdop = 99.0
     log_event = ""   # текущее событие для записи в лог этого кадра
     obstacles_avoided = 0
+    show_route = True   # видимость синей линии маршрута
+    show_coverage = True   # видимость закрашенной зоны обработанного поля
     log = []
     err_history = []
+    gdop_history = []
+    cov_history = []
     msgt = 0
     msg = ""
+
+    def build_mission_path():
+        base_path = generate_base_path(mission_margin, mission_step, mission_left_to_right)
+        return optimize_path_with_memory(base_path, ai_memory.get("obstacles", []))
+
+    def apply_mission_path():
+        nonlocal path, wp, using_learned_path, app_state, auto
+        path = build_mission_path()
+        wp = 0
+        using_learned_path = False
+        app_state = "SIM"
+        auto = False
 
     # ИСПРАВЛЕНИЕ: surface с альфа-каналом для рисования полупрозрачных кругов памяти
     mem_overlay = pygame.Surface((FIELD_AREA_W, FIELD_AREA_H), pygame.SRCALPHA)
@@ -950,25 +1181,20 @@ def main():
 
             if e.type == pygame.MOUSEBUTTONDOWN:
                 mx, my = pygame.mouse.get_pos()
-                if my < TAB_HEIGHT:
-                    if mx < 220:
+                tab_idx = get_tab_index_at(mx, my)
+                if tab_idx is not None:
+                    if tab_idx == 0:
                         app_state = "SIM"
-                    elif mx < 440:
+                    elif tab_idx == 1:
                         app_state = "ANALYZE"
-                    elif mx < 660:
-                        app_state = "EDIT"
-                        custom_path = []
+                    elif tab_idx == 2:
+                        app_state = "MISSION"
                         auto = False
 
                 elif app_state == "ANALYZE":
-                    btn_rect = pygame.Rect(0, 0, 280, 50)
-                    btn_rect.center = (WINDOW_W // 2, WINDOW_H // 2 + 10)
+                    btn_rect = get_analysis_button_rect()
                     if btn_rect.collidepoint(mx, my):
                         open_file_and_analyze()
-
-                elif app_state == "EDIT":
-                    if f_rect.collidepoint(mx, my) and len(custom_path) < 5:
-                        custom_path.append((mx, my))
 
                 elif app_state == "SIM":
                     if f_rect.collidepoint(mx, my):
@@ -979,23 +1205,36 @@ def main():
                                 heatmap_surface = generate_heatmap(FIELD_AREA_W, FIELD_AREA_H, bcs)
 
             if e.type == pygame.KEYDOWN:
+                if e.key == pygame.K_v:
+                    show_coverage = not show_coverage
                 if e.key == pygame.K_TAB:
-                    app_state = "ANALYZE" if app_state == "SIM" else "SIM"
-
-                if e.key == pygame.K_e:
-                    if app_state == "SIM":
-                        app_state = "EDIT"
-                        custom_path = []
+                    states = ["SIM", "ANALYZE", "MISSION"]
+                    app_state = states[(states.index(app_state) + 1) % len(states)]
+                    if app_state == "MISSION":
                         auto = False
-                    elif app_state == "EDIT":
-                        obs_list = ai_memory.get("obstacles", [])
-                        if len(custom_path) > 1:
-                            path = optimize_path_with_memory(custom_path.copy(), obs_list)
-                        else:
-                            path = optimize_path_with_memory(generate_base_path(), obs_list)
-                        wp = 0
+
+                if app_state == "MISSION":
+                    if e.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_e):
+                        apply_mission_path()
+                    elif e.key == pygame.K_ESCAPE:
                         app_state = "SIM"
-                        using_learned_path = False
+                    elif e.key == pygame.K_UP:
+                        mission_margin = min(240, mission_margin + 10)
+                    elif e.key == pygame.K_DOWN:
+                        mission_margin = max(60, mission_margin - 10)
+                    elif e.key == pygame.K_RIGHT:
+                        mission_step = min(140, mission_step + 5)
+                    elif e.key == pygame.K_LEFT:
+                        mission_step = max(45, mission_step - 5)
+                    elif e.key == pygame.K_r:
+                        mission_left_to_right = not mission_left_to_right
+                    elif e.key == pygame.K_m:
+                        mission_profile_idx = (mission_profile_idx + 1) % len(mission_profiles)
+                        mission_profile, mission_margin, mission_step = mission_profiles[mission_profile_idx]
+
+                elif e.key == pygame.K_e and app_state == "SIM":
+                    app_state = "MISSION"
+                    auto = False
 
                 if app_state == "SIM":
                     if e.key == pygame.K_t:
@@ -1008,7 +1247,7 @@ def main():
                     if e.key == pygame.K_c:
                         ai_memory = {"obstacles": [], "learned_path": []}
                         save_ai_memory(ai_memory)
-                        path = generate_base_path()
+                        path = build_mission_path()
                         wp = 0
                         using_learned_path = False
                         msg = "ПАМЯТЬ ОЧИЩЕНА"
@@ -1032,13 +1271,14 @@ def main():
                             path = smooth_path(ai_memory["learned_path"])
                             using_learned_path = True
                         else:
-                            path = optimize_path_with_memory(generate_base_path(),
-                                                             ai_memory.get("obstacles", []))
+                            path = build_mission_path()
                             using_learned_path = False
 
                         cov.surf.fill((0, 0, 0, 0))
                         cov.cells.clear()
                         err_history.clear()
+                        gdop_history.clear()
+                        cov_history.clear()
                         log.clear()
                         for o in obs:
                             o.known = False
@@ -1052,6 +1292,8 @@ def main():
                         lid.visible = not lid.visible
                     if e.key == pygame.K_h:
                         heat = not heat
+                    if e.key == pygame.K_p:
+                        show_route = not show_route
                     if e.key == pygame.K_s:
                         if not rec:
                             rec = True
@@ -1065,33 +1307,15 @@ def main():
 
         # --- ЛОГИКА СИМУЛЯЦИИ ---
         if app_state == "ANALYZE":
-            draw_analysis_screen(screen, font_title, font_main)
+            draw_analysis_screen(screen, font_title, font_main, font_sm,
+                                 err_history, dr_err_history, gdop_history, cov_history,
+                                 log, rec, obstacles_avoided)
             draw_tabs(screen, font_title, 1)
 
-        elif app_state == "EDIT":
-            screen.fill(C_BG)
-            for gx in range(0, FIELD_AREA_W, 200):
-                pygame.draw.line(screen, C_GRID, (gx, TAB_HEIGHT), (gx, WINDOW_H), 1)
-            for gy in range(TAB_HEIGHT, WINDOW_H, 200):
-                pygame.draw.line(screen, C_GRID, (0, gy), (FIELD_AREA_W, gy), 1)
-            for o in obs:
-                o.draw(screen)
-            # ИСПРАВЛЕНИЕ: рисуем полупрозрачные круги через SRCALPHA-поверхность
-            mem_overlay.fill((0, 0, 0, 0))
-            for m in ai_memory.get("obstacles", []):
-                pygame.draw.circle(mem_overlay, (255, 50, 50, 60),
-                                   (int(m['x']), int(m['y']) - TAB_HEIGHT), int(m['r'] + 10), 2)
-            screen.blit(mem_overlay, (0, TAB_HEIGHT))
-
-            if len(custom_path) > 1:
-                pygame.draw.lines(screen, C_GOOD, False, custom_path, 2)
-            for i, p in enumerate(custom_path):
-                pygame.draw.circle(screen, C_GOOD, p, 6)
-                screen.blit(font_main.render(str(i + 1), True, C_BG), (p[0] - 4, p[1] - 8))
-            screen.blit(font_title.render(
-                "РЕДАКТОР: Кликайте по полю (до 5 точек). Нажмите [E] для запуска.", True, C_ACCENT),
-                (20, TAB_HEIGHT + 20))
-            draw_tabs(screen, font_title, 2)
+        elif app_state == "MISSION":
+            mission_preview = build_mission_path()
+            draw_mission_screen(screen, font_sm, font_main, font_title, obs, mission_preview,
+                                mission_profile, mission_margin, mission_step, mission_left_to_right)
 
         elif app_state == "SIM":
             # 1. Сброс флага «известности» только когда препятствие позади
@@ -1286,14 +1510,20 @@ def main():
 
             err    = math.hypot(rob.x - ekf.x[0], rob.y - ekf.x[1])
             dr_err = math.hypot(rob.x - dr['x'],   rob.y - dr['y'])
+            ekf_cov = float(np.trace(ekf.P[:2, :2]))
             err_history.append(err)
             dr_err_history.append(dr_err)
+            gdop_history.append(current_gdop)
+            cov_history.append(ekf_cov)
             if len(err_history) > FIELD_AREA_W:
                 err_history.pop(0)
             if len(dr_err_history) > FIELD_AREA_W:
                 dr_err_history.pop(0)
+            if len(gdop_history) > FIELD_AREA_W:
+                gdop_history.pop(0)
+            if len(cov_history) > FIELD_AREA_W:
+                cov_history.pop(0)
             if rec:
-                ekf_cov    = float(np.trace(ekf.P[:2, :2]))
                 beacon_ids = ";".join(str(b.id) for b in vis) if vis else ""
                 heading_deg = round(math.degrees(rob.theta) % 360, 1)
                 log.append([
@@ -1317,7 +1547,8 @@ def main():
                 screen.blit(heatmap_surface, (0, TAB_HEIGHT))
             else:
                 screen.blit(dirt, (0, TAB_HEIGHT))
-                cov.draw(screen)
+                if show_coverage:
+                    cov.draw(screen)
 
             for o in obs:
                 o.draw(screen)
@@ -1335,7 +1566,7 @@ def main():
                 pygame.draw.line(screen, C_GRID, (0, gy), (FIELD_AREA_W, gy), 1)
 
             path_color = C_GOLD if using_learned_path else (0, 150, 255)
-            if len(path[wp:]) > 1:
+            if show_route and len(path[wp:]) > 1:
                 pygame.draw.lines(screen, path_color, False, path[wp:], 2)
 
             drawn = set()
@@ -1387,14 +1618,12 @@ def main():
             screen.blit(rt, rt.get_rect(center=(rob.x, rob.y)))
             screen.set_clip(None)
 
-            draw_graph_panel(screen,
-                             pygame.Rect(0, FIELD_AREA_H + TAB_HEIGHT, FIELD_AREA_W, GRAPH_H),
-                             err_history, dr_err_history)
             draw_sim_sidebar(screen, font_sm, font_main, font_title, rob, ekf, err, vis, auto, rec,
                              cov.get_hectares(), tractor_state, lid,
                              avoid_cnt=obstacles_avoided,
                              mem_cnt=len(ai_memory.get("obstacles", [])),
-                             gdop=current_gdop, dr_err=dr_err)
+                             gdop=current_gdop, dr_err=dr_err,
+                             route_points=len(path), ekf_trace=ekf_cov)
             draw_tabs(screen, font_title, 0)
 
             if msgt > 0:

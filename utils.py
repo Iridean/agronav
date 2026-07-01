@@ -68,7 +68,7 @@ C_COVERAGE = (0, 180, 120)
 C_GOLD = (255, 215, 0)
 
 # --- ПАМЯТЬ ИИ ---
-MEMORY_FILE = "ai_memory.json"
+MEMORY_FILE = "dist/ai_memory.json"
 
 
 def load_ai_memory():
